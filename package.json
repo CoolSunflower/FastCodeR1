@@ -14,8 +14,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "fastcoder1.helloWorld",
-        "title": "Hello World"
+        "command": "fastcoder1.start",
+        "title": "Chat with DeepSeek!"
       }
     ]
   },
