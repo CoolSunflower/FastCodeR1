@@ -6,6 +6,11 @@ interface ChatMessage {
     content: string;
 }
 
+// TODO:
+// - Code Block Rendering
+// - think tags rendering
+// - user chat history
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('Starting FastCodeR1!');
 
