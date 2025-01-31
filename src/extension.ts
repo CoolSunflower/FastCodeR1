@@ -1,64 +1,83 @@
 import { Ollama } from 'ollama';
 import * as vscode from 'vscode';
 
+interface ChatMessage {
+    role: 'user' | 'assistant';
+    content: string;
+}
+
 export function activate(context: vscode.ExtensionContext) {
+    console.log('Starting FastCodeR1!');
 
-	console.log('Starting FastCodeR1!');
+    const disposable = vscode.commands.registerCommand('fastcoder1.start', () => {
+        const panel = vscode.window.createWebviewPanel(
+            'FastCodeR1',
+            'FastCodeR1',
+            vscode.ViewColumn.One,
+            { enableScripts: true }
+        );
 
-	const disposable = vscode.commands.registerCommand('fastcoder1.start', () => {
-		const panel = vscode.window.createWebviewPanel(
-			'FastCodeR1',
-			'FastCodeR1',
-			vscode.ViewColumn.One,
-			{enableScripts: true}
-		);
-
-		panel.webview.html = getWebviewContent();
-
-		let ollama = new Ollama;
+        let chatHistory: ChatMessage[] = [];
         let isProcessing = false;
+        const ollama = new Ollama();
 
-		panel.webview.onDidReceiveMessage(async (message: any) => {
-            if (message.command === 'chat' && !isProcessing) {
-                isProcessing = true;
-                const userPrompt = message.text;
+        panel.webview.html = getWebviewContent();
 
-                try {
-                    const streamResponse = await ollama.chat({
-                        model: 'deepseek-r1:1.5b',
-                        messages: [{ role: 'user', content: userPrompt }],
-                        stream: true
-                    });
+        // Handle new chat command
+        panel.webview.onDidReceiveMessage(async (message: any) => {
+            switch (message.command) {
+                case 'chat':
+                    if (isProcessing){
+                        return;
+                    } 
+                    isProcessing = true;
+                    
+                    const userPrompt = message.text;
+                    chatHistory.push({ role: 'user', content: userPrompt });
 
-                    let fullResponse = '';
-                    for await (const part of streamResponse) {
-                        fullResponse += part.message.content;
+                    try {
+                        const streamResponse = await ollama.chat({
+                            model: 'deepseek-r1:1.5b',
+                            messages: chatHistory,
+                            stream: true
+                        });
+
+                        let assistantResponse = '';
+                        for await (const part of streamResponse) {
+                            assistantResponse += part.message.content;
+                            panel.webview.postMessage({
+                                command: 'chatResponse',
+                                text: assistantResponse,
+                                isFinal: false
+                            });
+                        }
+
+                        chatHistory.push({ role: 'assistant', content: assistantResponse });
                         panel.webview.postMessage({
                             command: 'chatResponse',
-                            text: fullResponse,
-                            isFinal: false
+                            text: assistantResponse,
+                            isFinal: true
                         });
+                    } catch (err) {
+                        panel.webview.postMessage({
+                            command: 'chatResponse',
+                            text: `Error: ${String(err)}`,
+                            isFinal: true
+                        });
+                    } finally {
+                        isProcessing = false;
                     }
+                    break;
 
-                    panel.webview.postMessage({
-                        command: 'chatResponse',
-                        text: fullResponse,
-                        isFinal: true
-                    });
-                } catch (err) {
-                    panel.webview.postMessage({
-                        command: 'chatResponse',
-                        text: `Error: ${String(err)}`,
-                        isFinal: true
-                    });
-                } finally {
-                    isProcessing = false;
-                }
+                case 'newChat':
+                    chatHistory = [];
+                    panel.webview.postMessage({ command: 'clearChat' });
+                    break;
             }
         });
-	});
+    });
 
-	context.subscriptions.push(disposable);
+    context.subscriptions.push(disposable);
 }
 
 function getWebviewContent(): string{
@@ -158,11 +177,29 @@ function getWebviewContent(): string{
                     from { opacity: 0; transform: translateY(10px); }
                     to { opacity: 1; transform: translateY(0); }
                 }
+
+                .header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 1rem;
+                }
+                .new-chat-btn {
+                    padding: 0.5rem 1rem;
+                    background: var(--vscode-button-secondaryBackground);
+                    color: var(--vscode-button-secondaryForeground);
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                }            
             </style>
 		</head>
 		<body>
-		<h2> FastCodeR1 Extension </h2>
-		<div class="chat-container" id="chatContainer"></div>
+        <div class="header">
+            <h2>FastCodeR1</h2>
+            <button class="new-chat-btn" id="newChatBtn">New Chat</button>
+        </div>
+        <div class="chat-container" id="chatContainer"></div>
 		<div class="input-container">
 			<textarea id="prompt" rows="3" placeholder="Ask something..."></textarea>
 			<button id="askBtn">Ask</button>
@@ -174,6 +211,7 @@ function getWebviewContent(): string{
                 const chatContainer = document.getElementById('chatContainer');
                 const promptTextarea = document.getElementById('prompt');
                 const askBtn = document.getElementById('askBtn');
+                const newChatBtn = document.getElementById('newChatBtn');
                 let currentAssistantMessage = null;
                 let shouldAutoScroll = true;
                 let isScrolling = false;
@@ -200,6 +238,14 @@ function getWebviewContent(): string{
                     return messageDiv;
                 }
 
+                // New Chat handler
+                newChatBtn.addEventListener('click', () => {
+                    vscode.postMessage({ command: 'newChat' });
+                    chatContainer.innerHTML = '';
+                    promptTextarea.value = '';
+                    askBtn.disabled = false;
+                });
+
                 askBtn.addEventListener('click', () => {
                     const text = promptTextarea.value.trim();
                     if (!text) return;
@@ -218,21 +264,22 @@ function getWebviewContent(): string{
                 });
 
                 window.addEventListener('message', event => {
-                    const { command, text, isFinal } = event.data;
-                    if (command === 'chatResponse') {
-                        currentAssistantMessage.textContent = text;
-                        
-                        // Only scroll if we should auto-scroll
-                        if (shouldAutoScroll) {
-                            requestAnimationFrame(() => {
-                                chatContainer.scrollTop = chatContainer.scrollHeight;
-                            });
-                        }
-                        
-                        if (isFinal) {
-                            askBtn.disabled = false;
-                            currentAssistantMessage = null;
-                        }
+                    switch (event.data.command) {
+                        case 'chatResponse':
+                            currentAssistantMessage.textContent = event.data.text;
+                            if (shouldAutoScroll) {
+                                requestAnimationFrame(() => {
+                                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                                });
+                            }
+                            if (event.data.isFinal) {
+                                askBtn.disabled = false;
+                                currentAssistantMessage = null;
+                            }
+                            break;
+                        case 'clearChat':
+                            chatContainer.innerHTML = '';
+                            break;
                     }
                 });
 
@@ -250,5 +297,4 @@ function getWebviewContent(): string{
 	`;
 }
 
-// This method is called when your extension is deactivated
 export function deactivate() {}
