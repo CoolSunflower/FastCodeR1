@@ -21,7 +21,7 @@ ollama run deepseek-r1:1.5b
 
 ## Release Notes
 
-### 0.1
+### 0.0.1
 This is the prerelease, it implements the idea with a basic UI.
 The current version supports:
 - Ability to chat locally in VSCode Environment
